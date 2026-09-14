@@ -1,0 +1,23 @@
+# Web framework / API
+fastapi
+uvicorn[standard]
+pydantic
+python-multipart
+
+# Database (SQLite works out of the box; install psycopg2-binary too if
+# you switch DATABASE_URL to Postgres)
+sqlalchemy
+
+# Auth
+bcrypt
+python-jose[cryptography]
+
+# Excel handling
+openpyxl
+pandas
+
+# Machine learning (sales forecast + udhaar payment-behavior model)
+scikit-learn
+xgboost
+joblib
+numpy

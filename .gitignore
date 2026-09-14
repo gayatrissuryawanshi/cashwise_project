@@ -1,0 +1,12 @@
+﻿.dart_tool/
+**/.dart_tool/
+build/
+**/build/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.db
+.venv/
+**/.venv/
+.env
+**/.env
