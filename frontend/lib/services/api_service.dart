@@ -16,7 +16,7 @@ class ApiService {
   ApiService({String? baseUrl})
       : dio = Dio(BaseOptions(
           baseUrl: baseUrl ??
-              'https://kept-rebecca-russia-jay.trycloudflare.com',
+              'https://cashwise-backend.vercel.app',
           connectTimeout: const Duration(seconds: 10),
           receiveTimeout: const Duration(seconds: 30),
         ));
