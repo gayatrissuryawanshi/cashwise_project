@@ -1,21 +1,12 @@
 """
 database.py
-Single database connection for the whole combined app (auth + decision
-engine + ML results all live in the same DB now, instead of three
-separate/missing databases).
+Single database connection for the combined CashWise app.
 
-Defaults to a local SQLite file (cashflow.db) so the project runs with
-zero setup - no Postgres install required to try it out. To use
-PostgreSQL instead (recommended for real deployment), set the
-DATABASE_URL environment variable before starting the server, e.g.:
+Local development:
+    Uses ./cashflow.db
 
-    # Windows PowerShell
-    $env:DATABASE_URL = "postgresql://postgres:YOUR_PASSWORD@localhost:5432/finance_engine"
-
-    # macOS/Linux
-    export DATABASE_URL="postgresql://postgres:YOUR_PASSWORD@localhost:5432/finance_engine"
-
-Nothing else in the codebase needs to change either way.
+Vercel:
+    Uses /tmp/cashflow.db because the deployed filesystem is read-only.
 """
 
 import os
@@ -23,13 +14,31 @@ import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./cashflow.db")
 
-# SQLite needs this connect arg when used from a threaded server (FastAPI/uvicorn).
-connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+if os.getenv("VERCEL"):
+    DATABASE_URL = "sqlite:////tmp/cashflow.db"
+else:
+    DATABASE_URL = os.environ.get(
+        "DATABASE_URL",
+        "sqlite:///./cashflow.db",
+    )
 
-engine = create_engine(DATABASE_URL, connect_args=connect_args)
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+connect_args = (
+    {"check_same_thread": False}
+    if DATABASE_URL.startswith("sqlite")
+    else {}
+)
+
+engine = create_engine(
+    DATABASE_URL,
+    connect_args=connect_args,
+)
+
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+)
 
 Base = declarative_base()
