@@ -1,13 +1,24 @@
-import pandas as pd
-import joblib
-
-from sklearn.ensemble import RandomForestClassifier
+import os
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-MODELS_DIR = BASE_DIR / "models"
+import joblib
+import pandas as pd
+from sklearn.ensemble import RandomForestClassifier
+
+
+# ============================================================
+# VERCEL-SAFE STORAGE
+# ============================================================
+
+if os.getenv("VERCEL"):
+    MODELS_DIR = Path("/tmp/cashwise_models")
+    OUTPUTS_DIR = Path("/tmp/cashwise_outputs")
+else:
+    BASE_DIR = Path(__file__).resolve().parent.parent
+    MODELS_DIR = BASE_DIR / "models"
+    OUTPUTS_DIR = BASE_DIR / "outputs"
+
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
-OUTPUTS_DIR = BASE_DIR / "outputs"
 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -20,15 +31,14 @@ FEATURES = [
     "on_time_rate",
     "early_rate",
     "late_rate",
-    "avg_amount"
+    "avg_amount",
 ]
 
 
 def load_udhar_data(file_path):
-
     df = pd.read_excel(
         file_path,
-        sheet_name="Udhar"
+        sheet_name="Udhar",
     )
 
     required_columns = [
@@ -36,11 +46,10 @@ def load_udhar_data(file_path):
         "Credit_Date",
         "Amount",
         "Due_Date",
-        "Payment_Date"
+        "Payment_Date",
     ]
 
     for column in required_columns:
-
         if column not in df.columns:
             raise ValueError(
                 f"Udhar sheet must contain: {column}"
@@ -48,22 +57,22 @@ def load_udhar_data(file_path):
 
     df["Credit_Date"] = pd.to_datetime(
         df["Credit_Date"],
-        errors="coerce"
+        errors="coerce",
     )
 
     df["Due_Date"] = pd.to_datetime(
         df["Due_Date"],
-        errors="coerce"
+        errors="coerce",
     )
 
     df["Payment_Date"] = pd.to_datetime(
         df["Payment_Date"],
-        errors="coerce"
+        errors="coerce",
     )
 
     df["Amount"] = pd.to_numeric(
         df["Amount"],
-        errors="coerce"
+        errors="coerce",
     )
 
     df = df.dropna(
@@ -71,7 +80,7 @@ def load_udhar_data(file_path):
             "Customer_ID",
             "Credit_Date",
             "Amount",
-            "Due_Date"
+            "Due_Date",
         ]
     )
 
@@ -85,7 +94,6 @@ def load_udhar_data(file_path):
 
 
 def calculate_delay(df):
-
     data = df.copy()
 
     data["delay"] = (
@@ -97,19 +105,16 @@ def calculate_delay(df):
 
 
 def classify_delay(delay):
-
     if delay < 0:
         return "EARLY"
 
-    elif delay == 0:
+    if delay == 0:
         return "ON TIME"
 
-    else:
-        return "LATE"
+    return "LATE"
 
 
 def get_last_three_months(group):
-
     group = group.sort_values(
         "Credit_Date"
     )
@@ -132,14 +137,11 @@ def get_last_three_months(group):
 
 
 def create_training_data(df):
-
     paid = df.dropna(
         subset=["Payment_Date"]
     ).copy()
 
-    paid = calculate_delay(
-        paid
-    )
+    paid = calculate_delay(paid)
 
     paid["label"] = (
         paid["delay"]
@@ -151,7 +153,6 @@ def create_training_data(df):
     for customer_id, group in paid.groupby(
         "Customer_ID"
     ):
-
         group = group.sort_values(
             "Credit_Date"
         )
@@ -159,17 +160,10 @@ def create_training_data(df):
         if len(group) < 2:
             continue
 
-        for i in range(
-            1,
-            len(group)
-        ):
-
+        for i in range(1, len(group)):
             history = group.iloc[:i]
-
             current = group.iloc[i]
 
-            # Use only the previous
-            # 3 months of history
             recent_history = (
                 get_last_three_months(
                     history
@@ -179,73 +173,45 @@ def create_training_data(df):
             if recent_history.empty:
                 continue
 
-            delays = recent_history[
-                "delay"
-            ]
+            delays = recent_history["delay"]
 
-            rows.append({
-
-                "Customer_ID":
-                    customer_id,
-
-                "avg_delay":
-                    delays.mean(),
-
-                "last_delay":
-                    delays.iloc[-1],
-
-                "max_delay":
-                    delays.max(),
-
-                "min_delay":
-                    delays.min(),
-
-                "payment_count":
-                    len(recent_history),
-
-                "on_time_rate":
-                    (
+            rows.append(
+                {
+                    "Customer_ID": customer_id,
+                    "avg_delay": delays.mean(),
+                    "last_delay": delays.iloc[-1],
+                    "max_delay": delays.max(),
+                    "min_delay": delays.min(),
+                    "payment_count": len(
+                        recent_history
+                    ),
+                    "on_time_rate": (
                         (delays == 0).mean()
                     ),
-
-                "early_rate":
-                    (
+                    "early_rate": (
                         (delays < 0).mean()
                     ),
-
-                "late_rate":
-                    (
+                    "late_rate": (
                         (delays > 0).mean()
                     ),
-
-                "avg_amount":
-                    recent_history[
-                        "Amount"
-                    ].mean(),
-
-                "label":
-                    current["label"]
-            })
+                    "avg_amount": (
+                        recent_history["Amount"].mean()
+                    ),
+                    "label": current["label"],
+                }
+            )
 
     return pd.DataFrame(rows)
 
 
 def train_udhar_model(file_path):
+    print("\nLoading Udhar data...")
 
-    print(
-        "\nLoading Udhar data..."
-    )
+    df = load_udhar_data(file_path)
 
-    df = load_udhar_data(
-        file_path
-    )
-
-    training_data = (
-        create_training_data(df)
-    )
+    training_data = create_training_data(df)
 
     if len(training_data) < 10:
-
         raise ValueError(
             "Not enough payment history "
             "to train the Udhar model. "
@@ -253,13 +219,8 @@ def train_udhar_model(file_path):
             "customer payment records."
         )
 
-    X = training_data[
-        FEATURES
-    ]
-
-    y = training_data[
-        "label"
-    ]
+    X = training_data[FEATURES]
+    y = training_data["label"]
 
     print(
         f"Training using "
@@ -267,141 +228,110 @@ def train_udhar_model(file_path):
     )
 
     model = RandomForestClassifier(
-
         n_estimators=200,
-
         max_depth=6,
-
         random_state=42,
-
-        class_weight="balanced"
+        class_weight="balanced",
     )
 
-    model.fit(
-        X,
-        y
+    model.fit(X, y)
+
+    model_path = (
+        MODELS_DIR / "udhar_model.pkl"
     )
 
     joblib.dump(
-    model,
-    MODELS_DIR / "udhar_model.pkl"
-)
+        model,
+        model_path,
+    )
 
     print(
         "\nUDHAR MODEL TRAINED SUCCESSFULLY!"
     )
 
     print(
-        "Saved as: models/udhar_model.pkl"
+        f"Saved as: {model_path}"
     )
 
     return model
 
 
 def create_customer_features(df):
-
     paid = df.dropna(
         subset=["Payment_Date"]
     ).copy()
 
-    paid = calculate_delay(
-        paid
-    )
+    paid = calculate_delay(paid)
 
     rows = []
 
     for customer_id, group in paid.groupby(
         "Customer_ID"
     ):
-
-        # Only recent 3 months
         recent_history = (
-            get_last_three_months(
-                group
-            )
+            get_last_three_months(group)
         )
 
         if recent_history.empty:
             continue
 
-        delays = recent_history[
-            "delay"
-        ]
+        delays = recent_history["delay"]
 
-        rows.append({
-
-            "Customer_ID":
-                customer_id,
-
-            "avg_delay":
-                delays.mean(),
-
-            "last_delay":
-                delays.iloc[-1],
-
-            "max_delay":
-                delays.max(),
-
-            "min_delay":
-                delays.min(),
-
-            "payment_count":
-                len(recent_history),
-
-            "on_time_rate":
-                (
+        rows.append(
+            {
+                "Customer_ID": customer_id,
+                "avg_delay": delays.mean(),
+                "last_delay": delays.iloc[-1],
+                "max_delay": delays.max(),
+                "min_delay": delays.min(),
+                "payment_count": len(
+                    recent_history
+                ),
+                "on_time_rate": (
                     (delays == 0).mean()
                 ),
-
-            "early_rate":
-                (
+                "early_rate": (
                     (delays < 0).mean()
                 ),
-
-            "late_rate":
-                (
+                "late_rate": (
                     (delays > 0).mean()
                 ),
-
-            "avg_amount":
-                recent_history[
-                    "Amount"
-                ].mean()
-        })
+                "avg_amount": (
+                    recent_history["Amount"].mean()
+                ),
+            }
+        )
 
     return pd.DataFrame(rows)
 
 
 def predict_customers(file_path):
+    df = load_udhar_data(file_path)
 
-    df = load_udhar_data(
-        file_path
+    model_path = (
+        MODELS_DIR / "udhar_model.pkl"
     )
 
-    model = joblib.load(
-    MODELS_DIR / "udhar_model.pkl"
-)
+    if not model_path.exists():
+        raise FileNotFoundError(
+            "Udhar model not found. "
+            "Please train the Udhar model first."
+        )
+
+    model = joblib.load(model_path)
 
     customer_features = (
-        create_customer_features(
-            df
-        )
+        create_customer_features(df)
     )
 
     if customer_features.empty:
         return pd.DataFrame()
 
-    X = customer_features[
-        FEATURES
-    ]
+    X = customer_features[FEATURES]
 
-    predictions = model.predict(
-        X
-    )
+    predictions = model.predict(X)
 
-    probabilities = model.predict_proba(
-        X
-    )
+    probabilities = model.predict_proba(X)
 
     confidence = (
         probabilities.max(axis=1)
@@ -421,10 +351,8 @@ def predict_customers(file_path):
     for customer_id in customer_features[
         "Customer_ID"
     ]:
-
         customer_transactions = df[
-            df["Customer_ID"]
-            == customer_id
+            df["Customer_ID"] == customer_id
         ]
 
         unpaid = customer_transactions[
@@ -433,13 +361,9 @@ def predict_customers(file_path):
             ].isna()
         ]
 
-        amount_due = unpaid[
-            "Amount"
-        ].sum()
+        amount_due = unpaid["Amount"].sum()
 
-        outstanding.append(
-            amount_due
-        )
+        outstanding.append(amount_due)
 
     customer_features[
         "Outstanding"
@@ -449,7 +373,6 @@ def predict_customers(file_path):
 
 
 if __name__ == "__main__":
-
     print(
         "udhar_model.py is working."
     )
