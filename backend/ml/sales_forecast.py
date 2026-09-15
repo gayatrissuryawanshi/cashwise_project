@@ -1,15 +1,31 @@
+import os
+from pathlib import Path
+
 import pandas as pd
 import numpy as np
 import joblib
 from xgboost import XGBRegressor
 
-from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-MODELS_DIR = BASE_DIR / "models"
+# ==========================================
+# VERCEL / LOCAL STORAGE
+# ==========================================
+
+# Vercel allows writing only inside /tmp.
+# Locally, keep using the project's models/outputs folders.
+
+if os.getenv("VERCEL"):
+    MODELS_DIR = Path("/tmp/cashwise_models")
+    OUTPUTS_DIR = Path("/tmp/cashwise_outputs")
+else:
+    BASE_DIR = Path(__file__).resolve().parent.parent
+    MODELS_DIR = BASE_DIR / "models"
+    OUTPUTS_DIR = BASE_DIR / "outputs"
+
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
-OUTPUTS_DIR = BASE_DIR / "outputs"
 OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
 # ==========================================
 # ML FEATURES
 # ==========================================
@@ -21,7 +37,7 @@ FEATURES = [
     "lag_1",
     "lag_7",
     "rolling_7",
-    "rolling_14"
+    "rolling_14",
 ]
 
 
@@ -33,59 +49,49 @@ def load_sales_data(file_path):
 
     df = pd.read_excel(
         file_path,
-        sheet_name="Sales"
+        sheet_name="Sales",
     )
 
     required_columns = [
         "Date",
-        "Sales"
+        "Sales",
     ]
 
     for column in required_columns:
-
         if column not in df.columns:
-
             raise ValueError(
                 f"Excel file must contain: {column}"
             )
 
-    # Convert date
     df["Date"] = pd.to_datetime(
         df["Date"],
-        errors="coerce"
+        errors="coerce",
     )
 
-    # Convert sales to numbers
     df["Sales"] = pd.to_numeric(
         df["Sales"],
-        errors="coerce"
+        errors="coerce",
     )
 
-    # Remove invalid rows
     df = df.dropna(
         subset=[
             "Date",
-            "Sales"
+            "Sales",
         ]
     )
 
-    # Sales cannot be negative
     df = df[
         df["Sales"] >= 0
     ]
 
-    # Sort by date
     df = df.sort_values(
         "Date"
     )
 
-    # If there are multiple sales
-    # entries on the same date,
-    # combine them
     df = (
         df.groupby(
             "Date",
-            as_index=False
+            as_index=False,
         )["Sales"]
         .sum()
     )
@@ -105,7 +111,6 @@ def create_features(df):
 
     data = df.copy()
 
-    # Calendar features
     data["day_of_week"] = (
         data["Date"].dt.dayofweek
     )
@@ -118,7 +123,6 @@ def create_features(df):
         data["Date"].dt.month
     )
 
-    # Previous sales
     data["lag_1"] = (
         data["Sales"].shift(1)
     )
@@ -127,7 +131,6 @@ def create_features(df):
         data["Sales"].shift(7)
     )
 
-    # Rolling averages
     data["rolling_7"] = (
         data["Sales"]
         .shift(1)
@@ -142,8 +145,6 @@ def create_features(df):
         .mean()
     )
 
-    # Remove rows where
-    # features aren't available
     data = data.dropna()
 
     return data
@@ -162,7 +163,6 @@ def train_sales_model(file_path):
     )
 
     if len(df) < 60:
-
         raise ValueError(
             "At least 60 days of sales "
             "history is recommended."
@@ -185,17 +185,11 @@ def train_sales_model(file_path):
     )
 
     model = XGBRegressor(
-
         n_estimators=300,
-
         max_depth=4,
-
         learning_rate=0.05,
-
         objective="reg:squarederror",
-
-        random_state=42
-
+        random_state=42,
     )
 
     model.fit(
@@ -203,18 +197,18 @@ def train_sales_model(file_path):
         y
     )
 
-    # Save model
+    # Save trained model
     joblib.dump(
-    model,
-    MODELS_DIR / "sales_model.pkl"
-)
+        model,
+        MODELS_DIR / "sales_model.pkl"
+    )
 
     print(
         "\nSALES MODEL TRAINED SUCCESSFULLY!"
     )
 
     print(
-        "Saved as: models/sales_model.pkl"
+        f"Saved as: {MODELS_DIR / 'sales_model.pkl'}"
     )
 
     return model
@@ -226,37 +220,29 @@ def train_sales_model(file_path):
 
 def create_future_features(
     history,
-    future_date
+    future_date,
 ):
 
     sales = history[
         "Sales"
     ].tolist()
 
-    # Previous day
     lag_1 = sales[-1]
 
-    # Sales 7 days ago
     if len(sales) >= 7:
-
         lag_7 = sales[-7]
-
     else:
-
         lag_7 = np.mean(sales)
 
-    # 7-day average
     rolling_7 = np.mean(
         sales[-7:]
     )
 
-    # 14-day average
     rolling_14 = np.mean(
         sales[-14:]
     )
 
     features = {
-
         "day_of_week":
             future_date.dayofweek,
 
@@ -276,8 +262,7 @@ def create_future_features(
             rolling_7,
 
         "rolling_14":
-            rolling_14
-
+            rolling_14,
     }
 
     return pd.DataFrame(
@@ -291,15 +276,34 @@ def create_future_features(
 
 def forecast_sales(
     file_path,
-    days=30
+    days=30,
 ):
 
-    # Load trained model
-    model = joblib.load(
-    MODELS_DIR / "sales_model.pkl"
-)
+    model_path = (
+        MODELS_DIR
+        / "sales_model.pkl"
+    )
 
-    # Load historical data
+    # If model does not exist,
+    # train it automatically.
+    if not model_path.exists():
+
+        print(
+            "Sales model not found."
+        )
+
+        print(
+            "Training sales model..."
+        )
+
+        train_sales_model(
+            file_path
+        )
+
+    model = joblib.load(
+        model_path
+    )
+
     df = load_sales_data(
         file_path
     )
@@ -312,67 +316,65 @@ def forecast_sales(
         history["Date"].iloc[-1]
     )
 
-    # Predict one day at a time
     for i in range(
         1,
-        days + 1
+        days + 1,
     ):
 
         future_date = (
             last_date
-            + pd.Timedelta(days=i)
+            + pd.Timedelta(
+                days=i
+            )
         )
 
-        features = create_future_features(
-            history,
-            future_date
+        features = (
+            create_future_features(
+                history,
+                future_date,
+            )
         )
 
-        prediction = model.predict(
-            features
-        )[0]
+        prediction = (
+            model.predict(
+                features
+            )[0]
+        )
 
-        # Prevent negative prediction
         prediction = max(
             0,
             prediction
         )
 
-        predictions.append({
+        predictions.append(
+            {
+                "Date":
+                    future_date,
 
-            "Date":
-                future_date,
+                "Predicted_Sales":
+                    round(
+                        prediction,
+                        2,
+                    ),
+            }
+        )
 
-            "Predicted_Sales":
-                round(
-                    prediction,
-                    2
-                )
-
-        })
-
-        # Add prediction to history
-        # so next day's prediction
-        # can use it
         history.loc[
             len(history)
         ] = [
-
             future_date,
-
-            prediction
-
+            prediction,
         ]
 
     result = pd.DataFrame(
         predictions
     )
 
-    # Save forecast
     result.to_csv(
-    OUTPUTS_DIR / "sales_forecast.csv",
-    index=False
-)
+        OUTPUTS_DIR
+        / "sales_forecast.csv",
+        index=False,
+    )
 
     return result
 
